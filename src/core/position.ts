@@ -1,4 +1,5 @@
 import { destination } from './geo';
+import { walkRoute, type RouteFix } from './route-walk';
 import { evaluatePlan, type RunPlan, type TrainState } from './shinkansen/run-plan';
 import type { SpoofSettings } from './settings';
 
@@ -10,6 +11,8 @@ export interface ResolvedPosition {
   heading: number | null;
   /** Ground speed in m/s, or null when the receiver is not moving. */
   speed: number | null;
+  /** Only in moving mode. */
+  route?: RouteFix;
   /** Only in shinkansen mode. */
   train?: TrainState;
 }
@@ -35,16 +38,21 @@ export function resolvePosition(
   let lon = settings.lng;
   let heading: number | null = null;
   let speed: number | null = null;
+  let route: RouteFix | undefined;
   let train: TrainState | undefined;
 
-  if (settings.mode === 'moving' && settings.speedKmh > 0) {
+  if (settings.mode === 'moving') {
     // Before the settings are applied the anchor is unset; hold the start point.
     const anchor = settings.appliedAtMs || nowMs;
     const elapsedSec = Math.max(0, (nowMs - anchor) / 1000);
-    const metres = (settings.speedKmh / 3.6) * elapsedSec;
-    [lat, lon] = destination(lat, lon, settings.bearingDeg, metres);
-    heading = ((settings.bearingDeg % 360) + 360) % 360;
-    speed = settings.speedKmh / 3.6;
+    const fix = walkRoute(settings.route, settings.routeEnd, settings.bearingDeg, elapsedSec);
+    if (fix) {
+      route = fix;
+      lat = fix.lat;
+      lon = fix.lon;
+      heading = fix.heading;
+      speed = fix.speed;
+    }
   } else if (settings.mode === 'shinkansen' && plan) {
     train = evaluatePlan(plan, nowMs);
     lat = train.lat;
@@ -57,5 +65,5 @@ export function resolvePosition(
     [lat, lon] = jitter(lat, lon, settings.randomRangeM);
   }
 
-  return { lat, lon, accuracy: settings.accuracy, heading, speed, train };
+  return { lat, lon, accuracy: settings.accuracy, heading, speed, route, train };
 }

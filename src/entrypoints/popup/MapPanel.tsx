@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import 'leaflet/dist/leaflet.css';
 import { destination } from '@/core/geo';
 import { PATH, STATIONS } from '@/core/shinkansen/route';
-import type { SpoofSettings } from '@/core/settings';
+import { DEFAULT_WAYPOINT, type SpoofSettings } from '@/core/settings';
 import type { Live } from './useLive';
 
 const TILE_LAYERS: Record<string, { url: string; maxZoom: number; attribution: string }> = {
@@ -22,11 +22,18 @@ const TILE_LAYERS: Record<string, { url: string; maxZoom: number; attribution: s
 };
 
 const ZOOM = { point: 13, train: 10 };
-/** How far ahead the 移動 mode projection is drawn. */
+/** How far ahead the 方位を保って直進 projection is drawn. */
 const PROJECTION_SEC = 3600;
 
-const dot = (kind: string) =>
-  L.divIcon({ className: `map-pin map-pin--${kind}`, iconSize: [16, 16], iconAnchor: [8, 8] });
+const coord = (value: number) => Number(value.toFixed(6));
+
+const dot = (kind: string, label?: string) =>
+  L.divIcon({
+    className: `map-pin map-pin--${kind}`,
+    html: label ?? '',
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+  });
 
 interface Props {
   settings: SpoofSettings;
@@ -37,18 +44,36 @@ interface Props {
 export function MapPanel({ settings, patch, live }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map>(null);
-  const setPin = useRef<L.Marker>(null);
+  const fixedPin = useRef<L.Marker>(null);
   const livePin = useRef<L.Marker>(null);
   const trail = useRef<L.Polyline>(null);
-  const routeLayer = useRef<L.LayerGroup>(null);
+  const wayLayer = useRef<L.LayerGroup>(null);
+  const railLayer = useRef<L.LayerGroup>(null);
+  const onMapClick = useRef<(at: L.LatLng) => void>(() => {});
   const [follow, setFollow] = useState(true);
 
   const { fix, plan } = live;
-  const placeable = settings.mode !== 'shinkansen';
-  // The map's click handler is installed once, so it reads the current mode
-  // through a ref rather than closing over it.
-  const placeableRef = useRef(placeable);
-  placeableRef.current = placeable;
+  const { mode, route, routeEnd } = settings;
+
+  // The click handler is installed once, so it goes through a ref that every
+  // render refreshes with the current mode and route.
+  onMapClick.current = (at) => {
+    if (mode === 'fixed') {
+      patch({ lat: coord(at.lat), lng: coord(at.lng) });
+    } else if (mode === 'moving') {
+      patch({
+        route: [
+          ...route,
+          {
+            lat: coord(at.lat),
+            lng: coord(at.lng),
+            speedKmh: route[route.length - 1]?.speedKmh ?? DEFAULT_WAYPOINT.speedKmh,
+            dwellSec: DEFAULT_WAYPOINT.dwellSec,
+          },
+        ],
+      });
+    }
+  };
 
   // Create the map once.
   useEffect(() => {
@@ -66,31 +91,25 @@ export function MapPanel({ settings, patch, live }: Props) {
     Object.values(layers)[0]!.addTo(instance);
     L.control.layers(layers, undefined, { position: 'topright' }).addTo(instance);
 
-    const marker = L.marker([settings.lat, settings.lng], {
-      icon: dot('set'),
-      draggable: true,
-      zIndexOffset: 500,
-    }).addTo(instance);
-    marker.on('dragend', () => {
-      const { lat, lng } = marker.getLatLng();
-      patch({ lat: Number(lat.toFixed(6)), lng: Number(lng.toFixed(6)) });
-    });
-
-    instance.on('click', (event: L.LeafletMouseEvent) => {
-      if (!placeableRef.current) return;
-      patch({
-        lat: Number(event.latlng.lat.toFixed(6)),
-        lng: Number(event.latlng.lng.toFixed(6)),
-      });
-    });
+    instance.on('click', (event: L.LeafletMouseEvent) => onMapClick.current(event.latlng));
     // Panning by hand means the user wants to look somewhere else.
     instance.on('dragstart', () => setFollow(false));
 
+    const pin = L.marker([settings.lat, settings.lng], {
+      icon: dot('set'),
+      draggable: true,
+      zIndexOffset: 500,
+    });
+    pin.on('dragend', () => {
+      const { lat, lng } = pin.getLatLng();
+      patch({ lat: coord(lat), lng: coord(lng) });
+    });
+
     map.current = instance;
-    setPin.current = marker;
+    fixedPin.current = pin;
     livePin.current = L.marker([settings.lat, settings.lng], {
       icon: dot('live'),
-      zIndexOffset: 600,
+      zIndexOffset: 700,
     });
     trail.current = L.polyline([], { color: '#1a73e8', weight: 2, dashArray: '4 4' });
 
@@ -105,20 +124,61 @@ export function MapPanel({ settings, patch, live }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The 東海道新幹線 alignment and its stations, drawn only in that mode.
+  // 固定: one draggable pin on the reported point.
+  useEffect(() => {
+    const pin = fixedPin.current;
+    if (!pin) return;
+    if (mode !== 'fixed') return void pin.remove();
+    pin.setLatLng([settings.lat, settings.lng]).addTo(map.current!);
+  }, [mode, settings.lat, settings.lng]);
+
+  // 移動: the route line and one numbered, draggable pin per waypoint.
   useEffect(() => {
     const instance = map.current;
     if (!instance) return;
-    if (settings.mode !== 'shinkansen') {
-      routeLayer.current?.remove();
-      routeLayer.current = null;
+    wayLayer.current?.remove();
+    wayLayer.current = null;
+    if (mode !== 'moving') return;
+
+    const points = route.map((point) => [point.lat, point.lng] as L.LatLngTuple);
+    const line = routeEnd === 'loop' && points.length > 1 ? [...points, points[0]!] : points;
+    const markers = route.map((point, index) => {
+      const marker = L.marker([point.lat, point.lng], {
+        icon: dot('way', String(index + 1)),
+        draggable: true,
+        zIndexOffset: 500 + index,
+      });
+      marker.on('dragend', () => {
+        const { lat, lng } = marker.getLatLng();
+        patch({
+          route: route.map((other, i) =>
+            i === index ? { ...other, lat: coord(lat), lng: coord(lng) } : other,
+          ),
+        });
+      });
+      return marker;
+    });
+
+    wayLayer.current = L.layerGroup([
+      L.polyline(line, { color: '#1a73e8', weight: 3, opacity: 0.8 }),
+      ...markers,
+    ]).addTo(instance);
+  }, [mode, route, routeEnd, patch]);
+
+  // 新幹線: the alignment and its stations.
+  useEffect(() => {
+    const instance = map.current;
+    if (!instance) return;
+    if (mode !== 'shinkansen') {
+      railLayer.current?.remove();
+      railLayer.current = null;
       return;
     }
-    if (routeLayer.current) return;
+    if (railLayer.current) return;
 
     const line: L.LatLngExpression[] = [];
     for (let i = 0; i < PATH.length; i += 2) line.push([PATH[i]!, PATH[i + 1]!]);
-    const group = L.layerGroup([
+    railLayer.current = L.layerGroup([
       L.polyline(line, { color: '#0072ba', weight: 3, opacity: 0.85 }),
       ...STATIONS.map((station) =>
         L.circleMarker([station.lat, station.lon], {
@@ -130,36 +190,24 @@ export function MapPanel({ settings, patch, live }: Props) {
         }).bindTooltip(`${station.name}（${station.km.toFixed(1)} km）`),
       ),
     ]).addTo(instance);
-    routeLayer.current = group;
-  }, [settings.mode]);
+  }, [mode]);
 
   // Switching modes changes what is worth looking at, so recentre and resume
   // following whatever the new mode moves.
   useEffect(() => {
     setFollow(true);
-    map.current?.setView(
-      [fix.lat, fix.lon],
-      settings.mode === 'shinkansen' ? ZOOM.train : ZOOM.point,
-    );
+    map.current?.setView([fix.lat, fix.lon], mode === 'shinkansen' ? ZOOM.train : ZOOM.point);
     // `fix` is only read to pick the view at the moment the mode changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.mode]);
+  }, [mode]);
 
-  // Keep the draggable pin on the configured point.
-  useEffect(() => {
-    setPin.current?.setLatLng([settings.lat, settings.lng]);
-    if (placeable) setPin.current?.addTo(map.current!);
-    else setPin.current?.remove();
-  }, [settings.lat, settings.lng, placeable]);
-
-  // Keep the live marker and the projected track on the simulated position.
+  // Keep the live marker and the straight-on projection on the simulation.
   useEffect(() => {
     const instance = map.current;
     const marker = livePin.current;
     if (!instance || !marker) return;
 
-    const showLive = settings.mode !== 'fixed';
-    if (!showLive) {
+    if (mode === 'fixed') {
       marker.remove();
       trail.current?.remove();
       return;
@@ -172,49 +220,56 @@ export function MapPanel({ settings, patch, live }: Props) {
       element.classList.toggle('is-moving', (fix.speed ?? 0) > 0.5);
     }
 
-    if (settings.mode === 'moving' && settings.speedKmh > 0) {
+    const last = route[route.length - 1];
+    if (mode === 'moving' && routeEnd === 'bearing' && last && last.speedKmh > 0) {
       const ahead = destination(
-        fix.lat,
-        fix.lon,
+        last.lat,
+        last.lng,
         settings.bearingDeg,
-        (settings.speedKmh / 3.6) * PROJECTION_SEC,
+        (last.speedKmh / 3.6) * PROJECTION_SEC,
       );
-      trail.current?.setLatLngs([[settings.lat, settings.lng], [fix.lat, fix.lon], ahead]);
+      trail.current?.setLatLngs([[last.lat, last.lng], ahead]);
       trail.current?.addTo(instance);
     } else {
       trail.current?.remove();
     }
 
     if (follow) instance.panTo([fix.lat, fix.lon], { animate: false });
-  }, [fix, follow, settings.mode, settings.bearingDeg, settings.speedKmh, settings.lat, settings.lng]);
+  }, [fix, follow, mode, route, routeEnd, settings.bearingDeg]);
 
-  const fitRoute = () => {
+  const fitAll = () => {
     const instance = map.current;
-    if (!instance || !plan) return;
+    if (!instance) return;
     setFollow(false);
-    const stops = plan.stops.filter((s) => !s.passing);
-    const first = STATIONS.find((s) => s.name === stops[0]?.name);
-    const last = STATIONS.find((s) => s.name === stops.at(-1)?.name);
-    if (!first || !last) return;
-    instance.fitBounds(
-      L.latLngBounds([first.lat, first.lon], [last.lat, last.lon]).pad(0.08),
-    );
+    if (mode === 'shinkansen') {
+      if (!plan) return;
+      const calls = plan.stops.filter((s) => !s.passing);
+      const first = STATIONS.find((s) => s.name === calls[0]?.name);
+      const last = STATIONS.find((s) => s.name === calls.at(-1)?.name);
+      if (first && last) {
+        instance.fitBounds(L.latLngBounds([first.lat, first.lon], [last.lat, last.lon]).pad(0.08));
+      }
+      return;
+    }
+    if (route.length > 1) {
+      instance.fitBounds(L.latLngBounds(route.map((p) => [p.lat, p.lng])).pad(0.2));
+    }
   };
+
+  const hint =
+    mode === 'fixed'
+      ? '地図をクリック、またはピンをドラッグして位置を指定'
+      : mode === 'moving'
+        ? 'クリックで地点を追加、ピンをドラッグで移動'
+        : '列車の現在位置';
 
   return (
     <div className="map">
-      <div
-        className="map-canvas"
-        ref={host}
-        data-placeable={placeable ? '' : undefined}
-        aria-label="位置を選択する地図"
-      />
+      <div className="map-canvas" ref={host} aria-label="位置を選択する地図" />
       <div className="map-bar">
-        <span className="note">
-          {placeable ? '地図をクリック、またはピンをドラッグして位置を指定' : '列車の現在位置'}
-        </span>
-        {settings.mode === 'shinkansen' && (
-          <button type="button" className="chip" onClick={fitRoute}>
+        <span className="note">{hint}</span>
+        {(mode === 'shinkansen' || route.length > 1) && (
+          <button type="button" className="chip" onClick={fitAll}>
             全体
           </button>
         )}
@@ -226,7 +281,7 @@ export function MapPanel({ settings, patch, live }: Props) {
             setFollow(true);
             map.current?.setView(
               [fix.lat, fix.lon],
-              settings.mode === 'shinkansen' ? ZOOM.train : ZOOM.point,
+              mode === 'shinkansen' ? ZOOM.train : ZOOM.point,
             );
           }}
         >

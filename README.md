@@ -9,9 +9,12 @@ Built with [WXT](https://wxt.dev) + React + TypeScript, managed with pnpm.
 ## Features
 
 - **Fixed** — report a single latitude/longitude.
-- **Moving** — drift from a point at a set speed and bearing. Position is derived from the
-  clock, so a page polling once a second and a page polling fifty times a second see the
-  same track.
+- **Moving** — a route of as many waypoints as you like. Click the map to add points, drag
+  them to adjust, reorder them, and give each one the speed for the leg leaving it and a
+  dwell to stand still on arrival. At the end the route can stop, loop back to the start,
+  retrace itself, or carry straight on at a fixed bearing — one waypoint plus a bearing is
+  the plain constant-drift case. Position is derived from the clock, so a page polling once
+  a second and a page polling fifty times a second see the same track.
 - **東海道新幹線 (Tokaido Shinkansen)** — pick a train out of a generated service day and
   ride it: the spoofed position follows the real 515 km alignment between 東京 and 新大阪,
   accelerating out of each station, cruising, braking into the next stop, and standing
@@ -64,11 +67,13 @@ src/
     spoof.content.ts     MAIN world: patches navigator.geolocation
     popup/               React UI
       App.tsx            mode tabs, shared fields, apply/stop
-      MapPanel.tsx       Leaflet map: pick a point, follow the simulation
+      MapPanel.tsx       Leaflet map: pick points, follow the simulation
+      RoutePanel.tsx     waypoint editor for 移動
       Shinkansen.tsx     train picker and live read-out
       useLive.ts         ticking clock + the current run plan and fix
   core/
     geo.ts               haversine, bearing, destination point
+    route-walk.ts        waypoint route → where it has got to at time t
     position.ts          settings + clock → a position fix
     settings.ts          the per-tab settings shape
     messages.ts          message types for all three hops
@@ -159,7 +164,10 @@ pnpm data:route
 2. Click the extension icon.
 3. Pick a mode:
    - **固定** — click the map, drag the pin, or type a latitude and longitude.
-   - **移動** — add a bearing and a speed in km/h; the map draws where that heads.
+   - **移動** — click the map to drop waypoints, drag the numbered pins to move them, and
+     use ↑ ↓ ✕ to reorder or remove them. Each waypoint carries the speed for the leg that
+     leaves it and an optional dwell. Pick what happens at the end: 終点で停止,
+     始点に戻って繰り返し, 折り返して往復, or 方位を保って直進 with a bearing.
    - **東海道新幹線** — pick a direction, filter by 種別, choose a train, then decide
      whether it runs on the real clock (**ダイヤに同期**) or leaves its originating station
      the moment you apply (**いま始発駅を発車**). A time multiplier up to 60× makes a
@@ -202,8 +210,11 @@ Geolocation API をタブ単位で差し替える Chrome (MV3) 拡張機能で�
 ## 機能
 
 - **固定** — 指定した緯度・経度を返します。
-- **移動** — 指定した方位・速度で移動します。位置は時刻から計算するため、ポーリング間隔に
-  よらず同じ軌跡になります。
+- **移動** — 任意の数の地点を並べたルートを走ります。地図のクリックで地点を追加、ドラッグ
+  で移動、並び替えと削除も可能で、地点ごとに「次の区間の速度」と「停車時間」を設定できます。
+  終点に着いたあとは停止・始点に戻ってループ・折り返して往復・方位を保って直進から選べます
+  （1地点＋方位が従来の等速直線移動にあたります）。位置は時刻から計算するため、ポーリング
+  間隔によらず同じ軌跡になります。
 - **東海道新幹線** — 生成した1日分のダイヤから列車を選んで乗車できます。東京〜新大阪
   515 km の実際の線形をたどり、駅ごとに加速・巡航・減速し、停車時分のあいだはホームに
   停まります。`coords.speed` と `coords.heading` も走行モデルから埋めます。
@@ -296,7 +307,9 @@ GPS の誤差より十分小さい精度です。
 2. ツールバーの拡張機能アイコンをクリックします。
 3. モードを選びます。
    - **固定** — 地図をクリック、ピンをドラッグ、または緯度・経度を直接入力。
-   - **移動** — 方位（度）と速度（km/h）を追加。地図に進行方向の予測線が出ます。
+   - **移動** — 地図をクリックして地点を追加、番号付きピンのドラッグで移動、↑ ↓ ✕ で
+     並び替え・削除。地点ごとに次の区間の速度と停車時間を設定します。終点の挙動は
+     「終点で停止 / 始点に戻って繰り返し / 折り返して往復 / 方位を保って直進」から選択。
    - **東海道新幹線** — 方向と種別を選んで列車を選択し、実時刻どおりに走らせる
      （**ダイヤに同期**）か、適用した瞬間に始発駅を発車させる（**いま始発駅を発車**）かを
      選びます。最大60倍速にすれば2時間半の行程も短時間で確認できます。

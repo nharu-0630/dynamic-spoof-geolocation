@@ -3,6 +3,7 @@ import { browser } from 'wxt/browser';
 import type { PopupMessage } from '@/core/messages';
 import { DEFAULT_SETTINGS, type SpoofMode, type SpoofSettings } from '@/core/settings';
 import { MapPanel } from './MapPanel';
+import { RoutePanel } from './RoutePanel';
 import { RunMonitor, TrainPicker } from './Shinkansen';
 import { useLive } from './useLive';
 
@@ -84,7 +85,7 @@ export default function App() {
       <div className="body">
         <MapPanel settings={settings} patch={patch} live={live} />
 
-        {settings.mode !== 'shinkansen' && (
+        {settings.mode === 'fixed' && (
           <div className="row">
             <label className="field">
               <span>緯度</span>
@@ -107,29 +108,7 @@ export default function App() {
           </div>
         )}
 
-        {settings.mode === 'moving' && (
-          <div className="row">
-            <label className="field">
-              <span>方位（度・北=0）</span>
-              <input
-                type="number"
-                min="0"
-                max="360"
-                value={settings.bearingDeg}
-                onChange={(e) => patch({ bearingDeg: Number(e.target.value) })}
-              />
-            </label>
-            <label className="field">
-              <span>速度（km/h）</span>
-              <input
-                type="number"
-                min="0"
-                value={settings.speedKmh}
-                onChange={(e) => patch({ speedKmh: Number(e.target.value) })}
-              />
-            </label>
-          </div>
-        )}
+        {settings.mode === 'moving' && <RoutePanel settings={settings} patch={patch} />}
 
         {settings.mode === 'shinkansen' && (
           <>
