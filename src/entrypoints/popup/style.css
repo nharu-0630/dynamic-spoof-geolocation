@@ -83,10 +83,16 @@ body {
   color: var(--accent-text);
 }
 
+/*
+ * The body scrolls, and its own padding-top rolls away with the content, so the
+ * gap under the tabs has to live here. The border gives scrolled content a
+ * clean edge to disappear behind, mirroring the footer.
+ */
 .tabs {
   display: flex;
   gap: 4px;
-  padding: 8px 12px 0;
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--line);
 }
 
 .tabs button {
