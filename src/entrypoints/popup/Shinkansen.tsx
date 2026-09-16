@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { evaluatePlan, planFromSettings } from '@/core/shinkansen/plan';
+import { evaluatePlan } from '@/core/shinkansen/plan';
 import { formatClock, getTimetable, type Train, type TrainType } from '@/core/shinkansen/timetable';
 import { ROUTE_SOURCE } from '@/core/shinkansen/route';
 import { TIME_SCALES, type SpoofSettings } from '@/core/settings';
 import type { Direction } from '@/data/tokaido-pattern';
+import type { Live } from './useLive';
 
 const TYPES: TrainType[] = ['のぞみ', 'ひかり', 'こだま'];
 
@@ -19,12 +20,18 @@ export function pickDefaultTrain(trains: Train[], nowSec: number): Train | undef
   );
 }
 
-/** Brings the selected row into view the first time the list renders. */
+/**
+ * Brings the selected row into view the first time the list renders, by moving
+ * the list's own scrollbar — `scrollIntoView` would drag the whole popup along
+ * with it.
+ */
 let scrolled = false;
 const scrollIntoView = (node: HTMLElement | null) => {
   if (!node || scrolled) return;
   scrolled = true;
-  node.scrollIntoView({ block: 'center' });
+  const list = node.parentElement;
+  if (!list) return;
+  list.scrollTop = node.offsetTop - (list.clientHeight - node.clientHeight) / 2;
 };
 
 interface Props {
@@ -155,14 +162,8 @@ export function TrainPicker({ settings, patch }: Props) {
 }
 
 /** Live read-out of where the selected train is, ticking while the popup is open. */
-export function RunMonitor({ settings }: { settings: SpoofSettings }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 250);
-    return () => clearInterval(timer);
-  }, []);
-
-  const plan = useMemo(() => planFromSettings(settings), [settings]);
+export function RunMonitor({ live }: { live: Live }) {
+  const { plan, now } = live;
   if (!plan) return null;
 
   const state = evaluatePlan(plan, now);

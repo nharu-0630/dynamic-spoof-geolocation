@@ -38,7 +38,9 @@ export function resolvePosition(
   let train: TrainState | undefined;
 
   if (settings.mode === 'moving' && settings.speedKmh > 0) {
-    const elapsedSec = Math.max(0, (nowMs - settings.appliedAtMs) / 1000);
+    // Before the settings are applied the anchor is unset; hold the start point.
+    const anchor = settings.appliedAtMs || nowMs;
+    const elapsedSec = Math.max(0, (nowMs - anchor) / 1000);
     const metres = (settings.speedKmh / 3.6) * elapsedSec;
     [lat, lon] = destination(lat, lon, settings.bearingDeg, metres);
     heading = ((settings.bearingDeg % 360) + 360) % 360;

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { browser } from 'wxt/browser';
 import type { PopupMessage } from '@/core/messages';
 import { DEFAULT_SETTINGS, type SpoofMode, type SpoofSettings } from '@/core/settings';
+import { MapPanel } from './MapPanel';
 import { RunMonitor, TrainPicker } from './Shinkansen';
+import { useLive } from './useLive';
 
 const MODES: { id: SpoofMode; label: string }[] = [
   { id: 'fixed', label: '固定' },
@@ -38,6 +40,8 @@ export default function App() {
     (next: Partial<SpoofSettings>) => setSettings((current) => ({ ...current, ...next })),
     [],
   );
+
+  const live = useLive(settings);
 
   const apply = async () => {
     if (tabId === null) return;
@@ -78,6 +82,8 @@ export default function App() {
       </nav>
 
       <div className="body">
+        <MapPanel settings={settings} patch={patch} live={live} />
+
         {settings.mode !== 'shinkansen' && (
           <div className="row">
             <label className="field">
@@ -128,7 +134,7 @@ export default function App() {
         {settings.mode === 'shinkansen' && (
           <>
             <TrainPicker settings={settings} patch={patch} />
-            <RunMonitor settings={settings} />
+            <RunMonitor live={live} />
           </>
         )}
 

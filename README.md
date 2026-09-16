@@ -20,6 +20,9 @@ Built with [WXT](https://wxt.dev) + React + TypeScript, managed with pnpm.
 - **Per-tab settings** that survive navigation inside the tab. Applying or stopping takes
   effect immediately: an open `watchPosition` is moved between the real API and the spoofed
   one in place, so there is no need to reload the page.
+- **Map** — a Leaflet map in the popup. Click it or drag the pin to set the coordinates,
+  and watch the simulated position move on it: a heading arrow in 移動 mode, the whole
+  東海道新幹線 alignment with its 17 stations and a following train marker in 新幹線 mode.
 - **Jitter** — optional uniform scatter inside a radius, to look like a noisy fix.
 - Runs at `document_start` in the page's own world, so the override is in place before any
   page script can grab `navigator.geolocation`. While a tab is spoofed,
@@ -60,6 +63,10 @@ src/
     bridge.content.ts    isolated world: talks to the background, builds run plans
     spoof.content.ts     MAIN world: patches navigator.geolocation
     popup/               React UI
+      App.tsx            mode tabs, shared fields, apply/stop
+      MapPanel.tsx       Leaflet map: pick a point, follow the simulation
+      Shinkansen.tsx     train picker and live read-out
+      useLive.ts         ticking clock + the current run plan and fix
   core/
     geo.ts               haversine, bearing, destination point
     position.ts          settings + clock → a position fix
@@ -151,8 +158,8 @@ pnpm data:route
 1. Open a page that uses geolocation.
 2. Click the extension icon.
 3. Pick a mode:
-   - **固定** — enter a latitude and longitude.
-   - **移動** — add a bearing and a speed in km/h.
+   - **固定** — click the map, drag the pin, or type a latitude and longitude.
+   - **移動** — add a bearing and a speed in km/h; the map draws where that heads.
    - **東海道新幹線** — pick a direction, filter by 種別, choose a train, then decide
      whether it runs on the real clock (**ダイヤに同期**) or leaves its originating station
      the moment you apply (**いま始発駅を発車**). A time multiplier up to 60× makes a
@@ -162,13 +169,25 @@ pnpm data:route
 
 While the Shinkansen tab is open the popup shows a live read-out — current speed, position,
 distance from 東京, next stop and the full station table with the train's current position
-highlighted.
+highlighted — alongside the map, which follows the train. 全体 zooms out to the whole run,
+and 追従 re-centres after you have panned away.
+
+### Map tiles
+
+The map ships with two layers, switchable from the control in its top-right corner:
+[OpenStreetMap](https://www.openstreetmap.org/copyright) standard tiles (worldwide, the
+default) and the [地理院タイル](https://maps.gsi.go.jp/development/ichiran.html) 淡色地図
+from Japan's Geospatial Information Authority, which is sharper over the Shinkansen route
+but only covers Japan. Both are attributed on the map itself, as their terms require. Tiles
+are fetched only while the popup is open.
 
 ## License
 
 MIT (see `LICENSE`). The bundled route geometry is derived from OpenStreetMap and is
 licensed under the ODbL; the service pattern is derived from Japanese Wikipedia and is
-licensed under CC BY-SA 4.0.
+licensed under CC BY-SA 4.0. [Leaflet](https://leafletjs.com) is BSD-2-Clause. Map tiles
+are served by OpenStreetMap and the Geospatial Information Authority of Japan under their
+own terms and are not redistributed here.
 
 ---
 
@@ -191,6 +210,10 @@ Geolocation API をタブ単位で差し替える Chrome (MV3) 拡張機能で�
 - **タブごとの設定** — タブ内のページ遷移をまたいで維持されます。適用・停止は即座に反映され、
   実行中の `watchPosition` も本物の API と偽装のあいだでその場で張り替えるため、ページの
   リロードは不要です。
+- **地図** — ポップアップ内に Leaflet の地図を表示します。クリックまたはピンのドラッグで
+  座標を指定でき、シミュレート中の位置もその場で確認できます。移動モードでは進行方向の
+  矢印と予測線、新幹線モードでは東海道新幹線の全線形と17駅、追従する列車マーカーを描画
+  します。
 - **ゆらぎ** — 指定半径内に一様に散らし、実測のような揺れを再現します。
 - ページ自身のワールドで `document_start` に実行されるため、ページのスクリプトが
   `navigator.geolocation` を掴む前に差し替えが完了します。偽装中は
@@ -272,8 +295,8 @@ GPS の誤差より十分小さい精度です。
 1. 位置情報を使うページを開きます。
 2. ツールバーの拡張機能アイコンをクリックします。
 3. モードを選びます。
-   - **固定** — 緯度・経度を入力。
-   - **移動** — 方位（度）と速度（km/h）を追加。
+   - **固定** — 地図をクリック、ピンをドラッグ、または緯度・経度を直接入力。
+   - **移動** — 方位（度）と速度（km/h）を追加。地図に進行方向の予測線が出ます。
    - **東海道新幹線** — 方向と種別を選んで列車を選択し、実時刻どおりに走らせる
      （**ダイヤに同期**）か、適用した瞬間に始発駅を発車させる（**いま始発駅を発車**）かを
      選びます。最大60倍速にすれば2時間半の行程も短時間で確認できます。
@@ -281,9 +304,20 @@ GPS の誤差より十分小さい精度です。
 5. **適用** で開始、**停止** で実際の API に戻します。
 
 東海道新幹線タブを開いているあいだは、現在速度・座標・東京起点キロ程・次の停車駅と、
-現在位置を強調した駅時刻表がリアルタイムに表示されます。
+現在位置を強調した駅時刻表がリアルタイムに表示され、地図は列車を追従します。「全体」で
+全区間にズームアウト、「追従」で列車位置に戻ります。
+
+### 地図タイル
+
+地図右上のコントロールで2種類のレイヤを切り替えられます。既定は
+[OpenStreetMap](https://www.openstreetmap.org/copyright) の標準タイル（全世界）、もう一方は
+国土地理院の[地理院タイル](https://maps.gsi.go.jp/development/ichiran.html)淡色地図で、
+新幹線沿線は見やすいものの日本国内のみの提供です。いずれも規約どおり地図上に出典を表示
+しています。タイルの取得はポップアップを開いているあいだだけ行われます。
 
 ## ライセンス
 
 MIT（`LICENSE` 参照）。同梱の経路データは OpenStreetMap 由来で ODbL、ダイヤパターンは
-日本語版 Wikipedia 由来で CC BY-SA 4.0 です。
+日本語版 Wikipedia 由来で CC BY-SA 4.0 です。[Leaflet](https://leafletjs.com) は
+BSD-2-Clause。地図タイルは OpenStreetMap および国土地理院が各自の規約のもとで配信して
+いるもので、本リポジトリには含まれません。
